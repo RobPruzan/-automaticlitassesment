@@ -1,0 +1,11 @@
+gradio
+transformers
+fuzzywuzzy
+readability
+python-Levenshtein
+pandas
+nltk
+torch
+gensim
+sklearn
+seaborn
