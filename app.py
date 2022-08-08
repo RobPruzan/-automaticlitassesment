@@ -253,12 +253,12 @@ def phon(text):
 
 
 def gradio_fn(text, audio, target, actual_audio):
-    if text == None and audio == None and target == None and actual_audio == None:
+    if text is None and audio is None and target is None and actual_audio is None:
         return "No Inputs", "No Inputs", "No Inputs", "No Inputs"
     speech_score = 0
     div = calculate_diversity(text)
 
-    if actual_audio != None:
+    if actual_audio is not None:
         actual = p(actual_audio)["text"]
         print('sdfgs')
         speech_score = compute_score(target, actual)
@@ -267,7 +267,7 @@ def gradio_fn(text, audio, target, actual_audio):
             actual.lower()), "Diversity Score: " + str(div[1]), "Speech Score: " + str(speech_score)
 
     transcription = []
-    if audio != None:
+    if audio is not None:
         text = p(audio)["text"]
         transcription.append(text)
         state = div[0]
