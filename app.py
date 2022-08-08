@@ -273,7 +273,7 @@ def gradio_fn(text, audio, target, actual_audio):
             transcription[-1].lower()), "Diversity Score: " + str(div[1]), "No Inputs"
 
     return "Difficulty Score: " + str(reading_difficulty(text)), "Diversity Score: " + str(
-        div[1]), "No Audio Provided", "No Inputs"
+        div[1]), "No Audio Provided", "No Audio Provided"
 
 
 def plot():
@@ -307,7 +307,8 @@ interface = gr.Interface(
             source="microphone",
             type="filepath"),
         gr.components.Textbox(
-            label="Target Text to Recite"
+            label="Target Text to Recite",
+            placeholder="How much wood would a woodchuck chuck if a woodchuck could chuck wood?"
         ),
         gr.components.Audio(
             label="Read Text Above for Score",
