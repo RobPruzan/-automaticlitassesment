@@ -1,19 +1,27 @@
-import statistics
+import csv
 import string
 
 import gensim.downloader as api
-import gradio as gr
+import matplotlib.pyplot as plt
 import nltk
+import numpy as np
 import pandas as pd
+import gradio as gr
 import readability
 import seaborn as sns
 import torch
 from fuzzywuzzy import fuzz
 from nltk.corpus import stopwords
+from nltk.corpus import wordnet as wn
 from nltk.tokenize import word_tokenize
 from sklearn.metrics.pairwise import cosine_similarity
 from transformers import DistilBertTokenizer
 from transformers import pipeline
+
+
+nltk.download('wordnet')
+
+nltk.download('omw-1.4')
 
 nltk.download('cmudict')
 
@@ -35,6 +43,15 @@ model.to('cpu')
 
 p = pipeline("automatic-speech-recognition")
 
+
+def syns(word):
+    synonyms = []
+    for syn in wn.synsets(word):
+        for lm in syn.lemmas():
+            synonyms.append(lm.name())
+    return set(synonyms)
+
+
 w2v = dict({})
 for idx, key in enumerate(glove_vectors.key_to_index.keys()):
     w2v[key] = glove_vectors.get_vector(key)
@@ -46,40 +63,43 @@ def calculate_diversity(text):
         stop_words.add(i)
 
     tokenized_text = word_tokenize(text)
+
     tokenized_text = list(map(lambda word: word.lower(), tokenized_text))
     sim_words = {}
     if len(tokenized_text) <= 1:
         return 1, "More Text Required"
 
-    for idx, anc_word in enumerate(tokenized_text):
-        if anc_word in stop_words:
-            continue
-        if idx in sim_words:
-            sim_words[idx] = sim_words[idx]
+    for idx, anc in enumerate(tokenized_text):
+        if anc in stop_words or not anc in w2v or anc.isdigit():
+            sim_words[idx] = '@'
             continue
 
-        vocab = [anc_word]
+        vocab = [anc]
 
-        for pos, comp_word in enumerate(tokenized_text):
-
+        for pos, comp in enumerate(tokenized_text):
+            if pos == idx:
+                continue
+            if comp in stop_words:
+                continue
+            if not comp.isalpha():
+                continue
             try:
-                if not comp_word in stop_words and cosine_similarity(w2v[anc_word].reshape(1, -1),
-                                                                     w2v[comp_word].reshape(1, -1)) > .75:
-                    vocab.append(comp_word)
-
-                sim_words[idx] = vocab
-
+                if cosine_similarity(w2v[anc].reshape(1, -1), w2v[comp].reshape(1, -1)) > .7 or comp in syns(anc):
+                    vocab.append(comp)
             except KeyError:
                 continue
-
+        sim_words[idx] = vocab
+    print(sim_words)
     scores = {}
-    for k, value in sim_words.items():
+    for key, value in sim_words.items():
         if len(value) == 1:
-            scores[k] = 1
+            scores[key] = -1
             continue
-
-        t_sim = len(value) - 1
-        t_rep = (len(value) - 1) - (len(set(value)))
+        # if len(value) == 2:
+        #   scores[key] = -1
+        #   continue
+        t_sim = len(value)
+        t_rep = (len(value)) - (len(set(value)))
 
         score = ((t_sim - t_rep) / t_sim) ** 2
 
@@ -89,17 +109,29 @@ def calculate_diversity(text):
     total = 0
 
     for value in scores.values():
+        if value == -1:
+            continue
         mean_score += value
         total += 1
+    try:
+        return scores, {"Diversity Score": mean_score / total}
+    except ZeroDivisionError:
+        return scores, {"Dviersity Score": "Not Enough Data"}
 
-    return scores, mean_score / total
+
+def get_scores(text):
+    return calculate_diversity(text)[0]
+
+
+def get_mean_score(text):
+    return calculate_diversity(text)[1]
 
 
 def dict_to_list(dictionary, max_size=10):
     outer_list = []
     inner_list = []
 
-    for value in dictionary.values():
+    for key, value in dictionary.items():
         inner_list.append(value)
         if len(inner_list) == max_size:
             outer_list.append(inner_list)
@@ -166,6 +198,17 @@ def predict(text, tokenizer=tokenizer):
     return result
 
 
+def level(score):
+    if score <= 3:
+        return "n Elementary School"
+    elif 3 <= score <= 6:
+        return " Middle School"
+    elif 6 <= score <= 8:
+        return " High School"
+    else:
+        return " College"
+
+
 def reading_difficulty(excerpt):
     if len(excerpt) == 0:
         return "No Text Provided"
@@ -182,14 +225,16 @@ def reading_difficulty(excerpt):
         win_preds = []
         for text in windows:
             win_preds.append(predict(text, tokenizer).item())
-        result = statistics.mean(win_preds)
+        result = np.mean(win_preds)
         score = -(result * 1.786 + 6.4) + 10
-        return score
+        return "Difficulty Level: " + str(round(score, 2)) + '/10' + ' | A' + str(
+            level(score)) + " student could understand this"
 
     else:
         result = predict(excerpt).item()
         score = -(result * 1.786 + 6.4) + 10
-        return score
+        return 'Difficulty Level: ' + str(round(score, 2)) + '/10' + ' | A' + str(
+            level(score)) + " student could understand this"
 
 
 def calculate_stats(file_name, data_index):
@@ -213,7 +258,6 @@ def calculate_stats(file_name, data_index):
                 continue
 
             information['lines'] += 1
-            print(information['lines'])
             information['words_per_sentence'] += stat['sentence info']['words_per_sentence']
             information['words'] += stat['sentence info']['words']
             information['syll_per_word'] += stat['sentence info']['syll_per_word']
@@ -230,11 +274,11 @@ def calculate_stats(file_name, data_index):
 def transcribe(audio):
     # speech to text using pipeline
     text = p(audio)["text"]
-    transcription.append(text)
     return text
 
 
 def compute_score(target, actual):
+    print(target)
     target = target.lower()
     actual = actual.lower()
     return fuzz.ratio(target, actual)
@@ -249,93 +293,163 @@ def phon(text):
             pronun.append(alph[word][0])
         except Exception as e:
             pronun.append(word)
-    return pronun
 
+    def remove_digits(lists):
+        for lst in lists:
+            for idx, word in enumerate(lst):
+                lst[idx] = ''.join([letter for letter in word if not letter.isdigit()])
+        return lists
 
-def gradio_fn(text, audio, target, actual_audio):
-    if text is None and audio is None and target is None and actual_audio is None:
-        return "No Inputs", "No Inputs", "No Inputs", "No Inputs"
-    speech_score = 0
-
-    if actual_audio is not None:
-        actual = p(actual_audio)["text"]
-        speech_score = compute_score(target, actual)
-
-        return "Difficulty Score: " + str(reading_difficulty(actual)), "Transcript: " + str(
-            actual.lower()), "Diversity Score: " + str(calculate_diversity(target)[1]), "Speech Score: " + str(speech_score)
-    div = calculate_diversity(text)
-    transcription = []
-    if audio is not None:
-        text = p(audio)["text"]
-        transcription.append(text)
-        state = div[0]
-        return "Difficulty Score: " + str(reading_difficulty(text)), "Transcript: " + str(
-            transcription[-1].lower()), "Diversity Score: " + str(div[1]), "No Inputs"
-
-    return "Difficulty Score: " + str(reading_difficulty(text)), "Diversity Score: " + str(
-        div[1]), "No Audio Provided", "No Audio Provided"
+    output = []
+    for i in remove_digits(pronun):
+        output.append('-'.join(i).lower())
+    return '  '.join(output)
 
 
 def plot():
-    text = state
     diversity = calculate_diversity(text)[0]
     print(diversity)
     df = pd.DataFrame(dict_to_list(diversity))
     return heatmap(diversity, df)
 
 
-import csv
+def diversity_inter(text):
+    words = word_tokenize(text)
+    scores = get_scores(text)
+    interpret_values = [('', 0.0)]
+    for key, value in scores.items():
+        interpret_values.append((words[key], value))
+    interpret_values.append(('', 0.0))
+    print(interpret_values)
+    return {'original': text, 'interpretation': interpret_values}
 
-example_data = []
-x = 0
-with open('train.csv') as f:
-    reader = csv.reader(f)
-    next(reader)
-    for line in reader:
-        example_data.append([line[3]])
-        x += 1
-        if x > 100:
-            break
 
-state = {}
-interface = gr.Interface(
-    fn=gradio_fn,
-    inputs=[gr.components.Textbox(
-        label="Text"),
-        gr.components.Audio(
-            label="Speech Translation",
-            source="microphone",
-            type="filepath"),
-        gr.components.Textbox(
-            label="Target Text to Recite",
-            placeholder="How much wood would a woodchuck chuck if a woodchuck could chuck wood?"
-        ),
-        gr.components.Audio(
-            label="Read Text Above for Score",
-            source="microphone",
-            type="filepath")
-    ],
+def sliding_window(text):
+    wind_preds = []
+    windows = []
+    new_values = []
+    heat_map = []
+    words = word_tokenize(text)
+    for idx, text in enumerate(words):
+        if idx <= len(words) - 26:
+            x = ' '.join(words[idx: idx + 25])
+            windows.append(x)
 
-    outputs=["text", "text", "text", "text"],
-    theme="huggingface",
-    description="Enter text or speak into your microphone to have your text analyzed!",
-    rounded=True,
-    container=True,
-    article="""
-    Fine-Tuned Distil Bert- Automatically determining how difficult something is to read is a difficult task as underlying semantics are relevant. 
-    To efficiently compute text difficulty, a Distil-Bert pre-trained model is fine-tuned for regression using The CommonLit Ease of Readability (CLEAR) 
-    Corpus. https://educationaldatamining.org/EDM2021/virtual/static/pdf/EDM21_paper_35.pdf This dataset contains over 110,000 pairwise comparisons of 
-    ~1100 teachers responded to the question, "Which text is easier for students to understand?". This model is trained end-end (regression layer down to 
-    the first attention layer to ensure the best performance- Merchant et al. 2020
-    
-    Speech Pronunciaion Scoring: The Wave2Vec 2.0 model is utilized to convert audio into text in real-time. The model predicts words or phonemes (smallest 
-    unit of speech distinguishing one word (or word element) from another) from the input audio from the user. Due to the nature of the model, users with poor 
-    pronunciation get inaccurate results. This project attempts to score pronunciation by asking a user to read a target excerpt into the microphone. We then
-    pass this audio through Wave2Vec to get the inferred intended words. We measure the loss as the Levenshtein distance between the target and actual transcripts- 
-    the Levenshtein distance between two words is the minimum number of single-character edits required to change one word into the other.
-    Lexical Diversity Score: The lexical diversity score is computed by taking the ratio of unique similar words to total similar words squared. The similarity is computed 
-    as if the cosine similarity of the word2vec embeddings is greater than .75. It is bad writing/speech practice to repeat the same words when it's possible not to. 
-    Vocabulary diversity is generally computed by taking the ratio of unique strings/ total strings. This does not give an indication if the person has a large vocabulary 
-    or if the topic does not require a diverse vocabulary to express it
-    """
-).launch()
+    for text in windows:
+        prediction = -(predict(text).item() * 1.786 + 6.4) + 10
+        wind_preds.append(prediction)
+
+    size = 25
+    for i in wind_preds:
+        for j in range(size):
+            new_values.append(i)
+
+    heat_map = []
+    for idx, i in enumerate(new_values):
+        window = new_values[idx:idx + size]
+        heat_map.append(np.mean(window))
+    compressed_map = []
+    for idx, i in enumerate(heat_map):
+        if idx % size == 0:
+            window = heat_map[idx:idx + size]
+            compressed_map.append(np.mean(window))
+
+    inter_scores = compressed_map
+    while len(inter_scores) <= len(words) - 1:
+        inter_scores.append(compressed_map[-1])
+
+    x = list(range(len(inter_scores)))
+    y = inter_scores
+
+    fig, ax = plt.subplots()
+
+    ax.plot(x, y, color='orange', linewidth=2)
+    ax.grid(False)
+    plt.xlabel('Word Number', fontweight='bold')
+    plt.ylabel('Difficulty Score', fontweight='bold')
+    fig.patch.set_facecolor('white')
+    plt.suptitle('Difficulty Score Across Text', fontsize=14, fontweight='bold')
+    plt.style.use('ggplot')
+
+    fig = plt.gcf()
+
+    map = [('', 0)]
+    maxy = max(inter_scores)
+    miny = min(inter_scores)
+    spread = maxy - miny
+
+    for idx, i in enumerate(words):
+        map.append((i, (inter_scores[idx] - miny) / spread))
+    map.append(('', 0))
+
+    return fig, map
+
+
+def get_plot(text):
+    return sliding_window(text)[0]
+
+
+def get_dif_inter(text):
+    return {'original': text, 'interpretation': sliding_window(text)[1]}
+
+
+def speech_to_text(speech, target):
+    text = p(speech)["text"]
+    return text.lower(), {'Pronunciation Score': compute_score(text, target) / 100}, phon(target)
+
+
+def my_i_func(text):
+    return {"original": "", "interpretation": [('', 0.0), ('what', -0.2), ('great', 0.3), ('day', 0.5), ('', 0.0)]}
+
+
+inter = {"original": "what a wonderful day", "interpretation": [0, .2, .3, .5]}
+
+with gr.Blocks() as demo:
+    with gr.Column():
+        with gr.Row():
+            with gr.Box():
+                with gr.Column():
+                    with gr.Group():
+                        with gr.Tabs():
+                            with gr.TabItem("Text"):
+                                in_text = gr.Textbox(label="In Text")
+                                grade = gr.Button("Grade Your Text")
+                            with gr.TabItem("Speech"):
+                                audio_file = gr.Audio(source="microphone", type="filepath")
+                                grade1 = gr.Button("Grade Your Speech")
+
+            with gr.Box():
+                diff_output = gr.Label(label='Difficulty Level', show_label=True)
+                plotter = gr.Plot()
+
+        with gr.Row():
+            with gr.Box():
+                div_output = gr.Label(label='Lexical Diversity Score', show_label=False)
+                gr.Markdown("Lexical Diversity Heamap")
+                interpretation = gr.components.Interpretation(in_text, label="Diversity Heapmap")
+                
+            with gr.Box():
+                gr.Markdown("Relative Difficulty Heamap")
+                interpretation2 = gr.components.Interpretation(in_text, label="Difficulty Heapmap")
+    with gr.Row():
+        with gr.Box():
+            with gr.Group():
+                target = gr.Textbox(label="Target Text")
+            with gr.Group():
+                audio_file1 = gr.Audio(source="microphone", type="filepath")
+                b1 = gr.Button("Grade Your Pronunciation")
+        with gr.Box():
+            some_val = gr.Label()
+            text = gr.Textbox()
+            phones = gr.Textbox()
+
+    grade.click(reading_difficulty, inputs=in_text, outputs=diff_output)
+    grade.click(get_mean_score, inputs=in_text, outputs=div_output)
+    grade.click(diversity_inter, inputs=in_text, outputs=interpretation)
+    grade.click(get_dif_inter, inputs=in_text, outputs=interpretation2)
+    grade.click(get_plot, inputs=in_text, outputs=plotter)
+    # grade1.click(transcribe, inputs=input_audio, outputs=in_text)
+    # pronun.click(transcribe, inputs=pronon_audio, outputs=trans)
+    b1.click(speech_to_text, inputs=[audio_file1, target], outputs=[text, some_val, phones])
+demo.launch(debug=True)
+
