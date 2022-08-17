@@ -27,6 +27,8 @@ the first attention layer to ensure the best performance- Merchant et al. 2020)
                   "Forest" and "Trees" are 2 words to represent one semantic idea, so this would receive a 100% lexical diversity score, vs using the word
                   "Forest" twice would yield you a 25% diversity score, (1 unique word/ 2 total words)^2
 
-
-
+**Synonym Generation**- To automaically generate reading-level based synoynms, word occurence statistics are calculated in different levels of reading
+                   (defined by the fine-tuned DistilBert model). Based on those statistics we can derive what words are most likely to occur in different levels
+                   of reading. To generate synoynms, the WordNet lexical database is used, which are then catarogized by the word occurence statistics and reccomended
+                   to users.
 
