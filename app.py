@@ -385,26 +385,6 @@ def sliding_window(text):
 
     return fig, map
 
-    ax.plot(x, y, color='orange', linewidth=2)
-    ax.grid(False)
-    plt.xlabel('Word Number', fontweight='bold')
-    plt.ylabel('Difficulty Score', fontweight='bold')
-    fig.patch.set_facecolor('white')
-    plt.suptitle('Difficulty Score Across Text', fontsize=14, fontweight='bold')
-    plt.style.use('ggplot')
-
-    fig = plt.gcf()
-
-    map = [('', 0)]
-    maxy = max(inter_scores)
-    miny = min(inter_scores)
-    spread = maxy - miny
-
-    for idx, i in enumerate(words):
-        map.append((i, (inter_scores[idx] - miny) / spread))
-    map.append(('', 0))
-
-    return fig, map
 
 
 def get_plot(text):
