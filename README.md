@@ -10,9 +10,6 @@ the first attention layer to ensure the best performance- Merchant et al. 2020)
 ![image](https://user-images.githubusercontent.com/97781863/183447368-c2738b41-d6e2-40bd-8f74-99c09e3e5054.png)
 
 
-![image](https://user-images.githubusercontent.com/97781863/183444398-2ce60ecb-a42a-4db0-a4f2-436ecb50461b.png)
-
-
 **Lexical Diversity**-  The lexical diversity score is computed by taking the ratio of unique similar words to total similar words 
                   squared. The similarity is computed as if the cosine similarity of the word2vec embeddings is greater than .75. It is bad writing/speech 
                   practice to repeat the same words when it's possible not to. Vocabulary diversity is generally computed by taking the ratio of unique 
