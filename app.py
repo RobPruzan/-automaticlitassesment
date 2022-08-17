@@ -1,5 +1,6 @@
 import csv
 import string
+import json
 
 import gensim.downloader as api
 import matplotlib.pyplot as plt
@@ -44,7 +45,7 @@ model.to('cpu')
 p = pipeline("automatic-speech-recognition")
 
 
-def syns(word):
+def wn_syns(word):
     synonyms = []
     for syn in wn.synsets(word):
         for lm in syn.lemmas():
@@ -84,7 +85,7 @@ def calculate_diversity(text):
             if not comp.isalpha():
                 continue
             try:
-                if cosine_similarity(w2v[anc].reshape(1, -1), w2v[comp].reshape(1, -1)) > .7 or comp in syns(anc):
+                if cosine_similarity(w2v[anc].reshape(1, -1), w2v[comp].reshape(1, -1)) > .7 or comp in wn_syns(anc):
                     vocab.append(comp)
             except KeyError:
                 continue
@@ -404,54 +405,105 @@ def my_i_func(text):
     return {"original": "", "interpretation": [('', 0.0), ('what', -0.2), ('great', 0.3), ('day', 0.5), ('', 0.0)]}
 
 
-inter = {"original": "what a wonderful day", "interpretation": [0, .2, .3, .5]}
+def gen_syns(word, level):
+  with open('balanced_synonym_data.json') as f:
+    word = word.strip(" ")
+    data = json.loads(f.read())
+    school_to_level = {"Elementary Level":'1', "Middle School Level":'2', "High School Level":'3', "College Level":'4'}
+    pins = wn_syns(word)
+    reko = []
+    for i in pins:
+      if i in data[school_to_level[level]]:
+        reko.append(i)
+    str_reko = ""
+    for idx, i in enumerate(reko):
+      if idx != len(reko) -1:
+        str_reko+= i + ' | '
+      else:
+        str_reko+= i
+    return str_reko
 
-with gr.Blocks() as demo:
-    with gr.Column():
-        with gr.Row():
-            with gr.Box():
-                with gr.Column():
-                    with gr.Group():
-                        with gr.Tabs():
-                            with gr.TabItem("Text"):
-                                in_text = gr.Textbox(label="In Text")
-                                grade = gr.Button("Grade Your Text")
-                            with gr.TabItem("Speech"):
-                                audio_file = gr.Audio(source="microphone", type="filepath")
-                                grade1 = gr.Button("Grade Your Speech")
-
-            with gr.Box():
-                diff_output = gr.Label(label='Difficulty Level', show_label=True)
-                plotter = gr.Plot()
-
-        with gr.Row():
-            with gr.Box():
-                div_output = gr.Label(label='Lexical Diversity Score', show_label=False)
-                gr.Markdown("Lexical Diversity Heamap")
-                interpretation = gr.components.Interpretation(in_text, label="Diversity Heapmap")
-                
-            with gr.Box():
-                gr.Markdown("Relative Difficulty Heamap")
-                interpretation2 = gr.components.Interpretation(in_text, label="Difficulty Heapmap")
+with gr.Blocks(title="Automatic Literacy and Speech Assesmen") as demo:
+  gr.HTML("""<center><h7 style="font-size: 35px">Automatic Literacy and Speech Assesment</h7></center>""")
+  with gr.Column():
     with gr.Row():
-        with gr.Box():
-            with gr.Group():
-                target = gr.Textbox(label="Target Text")
-            with gr.Group():
-                audio_file1 = gr.Audio(source="microphone", type="filepath")
-                b1 = gr.Button("Grade Your Pronunciation")
-        with gr.Box():
-            some_val = gr.Label()
-            text = gr.Textbox()
-            phones = gr.Textbox()
+      with gr.Box():
 
-    grade.click(reading_difficulty, inputs=in_text, outputs=diff_output)
-    grade.click(get_mean_score, inputs=in_text, outputs=div_output)
-    grade.click(diversity_inter, inputs=in_text, outputs=interpretation)
-    grade.click(get_dif_inter, inputs=in_text, outputs=interpretation2)
-    grade.click(get_plot, inputs=in_text, outputs=plotter)
-    # grade1.click(transcribe, inputs=input_audio, outputs=in_text)
-    # pronun.click(transcribe, inputs=pronon_audio, outputs=trans)
-    b1.click(speech_to_text, inputs=[audio_file1, target], outputs=[text, some_val, phones])
+        with gr.Column():
+          with gr.Group():
+            with gr.Tabs():
+              
+                with gr.TabItem("Text"):
+                    in_text = gr.Textbox(label="Input Text Or Speech For Analysis")
+                    grade = gr.Button("Grade Your Text")
+                with gr.TabItem("Speech"):
+                    audio_file = gr.Audio(source="microphone",type="filepath")
+                    grade1 = gr.Button("Grade Your Speech")
+            with gr.Group():     
+              gr.Markdown("Reading Level Based Synonyms | Enter only one word at a time")
+              words = gr.Textbox(label="Word For Synonyms")
+              lvl = gr.Dropdown(choices=["Elementary Level", "Middle School Level", "High School Level", "College Level" ], label="Intended Reading Level For Synonym")
+              get_syns = gr.Button("Get Synonyms")
+              reccos = gr.Label()
+              
+
+      with gr.Box():
+          diff_output = gr.Label(label='Difficulty Level',show_label=True)
+          gr.Markdown("Diversity Score Across Text")
+          plotter = gr.Plot()
+
+
+
+
+    with gr.Row():
+      with gr.Box():
+        div_output = gr.Label(label='Diversity Score', show_label=False)
+        gr.Markdown("Diversity Heatmap | Blue cells are omitted from score | Darker = More Diverse")
+        interpretation = gr.components.Interpretation(in_text, label="Diversity Heatmap")
+      with gr.Box():
+          gr.Markdown("Relative Difficulty Heatmap- How confusing the text is in that area") 
+          interpretation2 = gr.components.Interpretation(in_text, label="Difficulty Heatmap")
+  with gr.Row():
+    with gr.Box():
+      with gr.Group():      
+        target = gr.Textbox(label="Target Text")
+      with gr.Group():      
+        audio_file1 = gr.Audio(source="microphone",type="filepath")
+        b1 = gr.Button("Grade Your Pronunciation")
+    with gr.Box():
+      some_val = gr.Label()
+      text = gr.Textbox()
+      phones = gr.Textbox()
+        
+  gr.Markdown("""**Reading Difficulty**-  Automatically determining how difficult something is to read is a difficult task as underlying 
+                 semantics are relevant. To efficiently compute text difficulty, a Distil-Bert pre-trained model is fine-tuned for regression 
+                 using The CommonLit Ease of Readability (CLEAR) Corpus. This model scores the text on how difficult it would be for a student
+                 to understand.
+              """)
+  gr.Markdown("""**Lexical Diversity**-  The lexical diversity score is computed by taking the ratio of unique similar words to total similar words 
+                  squared. The similarity is computed as if the cosine similarity of the word2vec embeddings is greater than .75. It is bad writing/speech 
+                  practice to repeat the same words when it's possible not to. Vocabulary diversity is generally computed by taking the ratio of unique 
+                  strings/ total strings. This does not give an indication if the person has a large vocabulary or if the topic does not require a diverse 
+                  vocabulary to express it. This algorithm only scores the text based on how many times a unique word was chosen for a semantic idea, e.g., 
+                  "Forest" and "Trees" are 2 words to represent one semantic idea, so this would receive a 100% lexical diversity score, vs using the word
+                  "Forest" twice would yield you a 25% diversity score, (1 unique word/ 2 total words)^2
+              """)
+  gr.Markdown("""**Speech Pronunciation Scoring-**-  The Wave2Vec 2.0 model is utilized to convert audio into text in real-time. The model predicts words or phonemes
+                  (smallest unit of speech distinguishing one word (or word element) from another) from the input audio from the user. Due to the nature of the model, 
+                  users with poor pronunciation get inaccurate results. This project attempts to score pronunciation by asking a user to read a target excerpt into the 
+                  microphone. We then pass this audio through Wave2Vec to get the inferred intended words. We measure the loss as the Levenshtein distance between the 
+                  target and actual transcripts- the Levenshtein distance between two words is the minimum number of single-character edits required to change one word 
+                  into the other.
+              """)
+
+
+  grade.click(reading_difficulty, inputs=in_text, outputs=diff_output)
+  grade.click(get_mean_score, inputs=in_text, outputs=div_output)
+  grade.click(diversity_inter, inputs=in_text, outputs=interpretation)
+  grade.click(get_dif_inter, inputs=in_text, outputs=interpretation2)
+  grade.click(get_plot, inputs=in_text, outputs=plotter)
+  grade1.click(speech_to_score, inputs=audio_file, outputs=diff_output)
+  b1.click(speech_to_text, inputs=[audio_file1, target], outputs=[text, some_val, phones])
+  get_syns.click(gen_syns, inputs=[words, lvl], outputs=reccos)
 demo.launch(debug=True)
 
