@@ -5,7 +5,7 @@
                  semantics are relevant. To efficiently compute text difficulty, a Distil-Bert pre-trained model is fine-tuned for regression 
                  using The CommonLit Ease of Readability (CLEAR) Corpus. This model scores the text on how difficult it would be for a student
                  to understand. This model is trained end-end (regression layer down to 
-the first attention layer to ensure the best performance- Merchant et al. 2020
+the first attention layer to ensure the best performance- Merchant et al. 2020)
  
 ![image](https://user-images.githubusercontent.com/97781863/183447368-c2738b41-d6e2-40bd-8f74-99c09e3e5054.png)
 
