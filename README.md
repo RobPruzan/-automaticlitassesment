@@ -14,7 +14,7 @@
                   squared. The similarity is computed as if the cosine similarity of the word2vec embeddings is greater than .75. It is bad writing/speech 
                   practice to repeat the same words when it's possible not to. Vocabulary diversity is generally computed by taking the ratio of unique 
                   strings/ total strings. This does not give an indication if the person has a large vocabulary or if the topic does not require a diverse 
-                  vocabulary to express it. This algorithm only scores the text based on how many times a unique word was chosen for a semantic idea, e.g., 
+                  vocabulary to express it. This custom algorithm only scores the text based on how many times a unique word was chosen for a semantic idea, e.g., 
                   "Forest" and "Trees" are 2 words to represent one semantic idea, so this would receive a 100% lexical diversity score, vs using the word
                   "Forest" twice would yield you a 25% diversity score, (1 unique word/ 2 total words)^2
                   
