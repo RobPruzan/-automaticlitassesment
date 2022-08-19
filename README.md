@@ -33,5 +33,5 @@
                    of reading. To generate synoynms, the WordNet lexical database is used, which are then catarogized by the word occurence statistics and reccomended
                    to users.
                    
-**Demo**- https://huggingface.co/spaces/RobPruzan/automaticlitassesment
+**Demo**- https://huggingface.co/spaces/RobPruzan/automaticlitassesment (Text above 25-50 words works best for visualazations)
 
