@@ -90,15 +90,11 @@ def calculate_diversity(text):
             except KeyError:
                 continue
         sim_words[idx] = vocab
-    print(sim_words)
     scores = {}
     for key, value in sim_words.items():
         if len(value) == 1:
             scores[key] = -1
             continue
-        # if len(value) == 2:
-        #   scores[key] = -1
-        #   continue
         t_sim = len(value)
         t_rep = (len(value)) - (len(set(value)))
 
@@ -228,18 +224,14 @@ def reading_difficulty(excerpt):
             win_preds.append(predict(text, tokenizer).item())
         result = np.mean(win_preds)
         score = -(result * 1.786 + 6.4) + 10
-        return "Difficulty Level: " + str(round(score, 2)) + '/10' + ' | A' + str(
-            level(score)) + " student could understand this"
+        return f'Difficulty Level: {round(score,2)}/10 | A {level(score)} student could understand this'
 
     else:
         result = predict(excerpt).item()
         score = -(result * 1.786 + 6.4) + 10
-        return 'Difficulty Level: ' + str(round(score, 2)) + '/10' + ' | A' + str(
-            level(score)) + " student could understand this"
-
+        return f'Difficulty Level: {round(score,2)}/10 | A {level(score)} student could understand this'"
 
 def calculate_stats(file_name, data_index):
-    # unicode escape only for essays
     with open(file_name, encoding='unicode_escape') as f:
         information = {'lines': 0, 'words_per_sentence': 0, 'words': 0, 'syll_per_word': 0, 'characters_per_word': 0,
                        'reading_difficulty': 0}
@@ -249,8 +241,6 @@ def calculate_stats(file_name, data_index):
 
             if len(line[data_index]) < 100:
                 continue
-
-            # if detect(line[data_index][len(line[data_index]) -400: len(line[data_index])-1]) == 'en':
 
             try:
                 stat = stats(line[data_index])
@@ -279,7 +269,6 @@ def transcribe(audio):
 
 
 def compute_score(target, actual):
-    print(target)
     target = target.lower()
     actual = actual.lower()
     return fuzz.ratio(target, actual)
@@ -321,7 +310,6 @@ def diversity_inter(text):
     for key, value in scores.items():
         interpret_values.append((words[key], value))
     interpret_values.append(('', 0.0))
-    print(interpret_values)
     return {'original': text, 'interpretation': interpret_values}
 
 
@@ -356,7 +344,6 @@ def sliding_window(text):
 
     inter_scores = [v for v in average_scores.values()]
     copy_list = inter_scores.copy()
-    print(inter_scores)
     while len(inter_scores) <= len(words) - 1:
         inter_scores.append(copy_list[-1])
 
