@@ -1,6 +1,9 @@
 import csv
 import string
 import json
+import sys
+import logging
+import argparse
 
 import gensim.downloader as api
 import matplotlib.pyplot as plt
@@ -11,6 +14,7 @@ import gradio as gr
 import readability
 import seaborn as sns
 import torch
+import torch.nn.functional as F
 from fuzzywuzzy import fuzz
 from nltk.corpus import stopwords
 from nltk.corpus import wordnet as wn
@@ -18,6 +22,8 @@ from nltk.tokenize import word_tokenize
 from sklearn.metrics.pairwise import cosine_similarity
 from transformers import DistilBertTokenizer
 from transformers import pipeline
+from transformers import BertTokenizer
+from transformers import AutoTokenizer, BertForSequenceClassification
 
 
 nltk.download('wordnet')
@@ -44,7 +50,9 @@ model.to('cpu')
 
 p = pipeline("automatic-speech-recognition")
 
-
+with open('balanced_synonym_data.json') as f:
+  data = json.loads(f.read())
+  
 def wn_syns(word):
     synonyms = []
     for syn in wn.synsets(word):
@@ -66,6 +74,7 @@ def calculate_diversity(text):
     tokenized_text = word_tokenize(text)
 
     tokenized_text = list(map(lambda word: word.lower(), tokenized_text))
+    global sim_words
     sim_words = {}
     if len(tokenized_text) <= 1:
         return 1, "More Text Required"
@@ -85,11 +94,12 @@ def calculate_diversity(text):
             if not comp.isalpha():
                 continue
             try:
-                if cosine_similarity(w2v[anc].reshape(1, -1), w2v[comp].reshape(1, -1)) > .7 or comp in wn_syns(anc):
+                if cosine_similarity(w2v[anc].reshape(1, -1), w2v[comp].reshape(1, -1)) > .75 or comp in wn_syns(anc):
                     vocab.append(comp)
             except KeyError:
                 continue
         sim_words[idx] = vocab
+    print(sim_words)
     scores = {}
     for key, value in sim_words.items():
         if len(value) == 1:
@@ -98,30 +108,45 @@ def calculate_diversity(text):
         t_sim = len(value)
         t_rep = (len(value)) - (len(set(value)))
 
-        score = ((t_sim - t_rep) / t_sim) ** 2
+        score = (t_sim - t_rep) / t_sim
 
         scores[key] = score
 
     mean_score = 0
     total = 0
-
+    
     for value in scores.values():
         if value == -1:
             continue
         mean_score += value
         total += 1
+        words = word_tokenize(text)
+
+    interpret_values = [('', 0.0)]
+
+    for key, value in scores.items():
+        interpret_values.append((words[key], value))
+
+    interpret_values.append(('', 0.0))
+    print(interpret_values)
+    int_vals = {'original': text, 'interpretation': interpret_values}
     try:
-        return scores, {"Diversity Score": mean_score / total}
+
+        return int_vals, {"Diversity Score": mean_score / total}
     except ZeroDivisionError:
-        return scores, {"Dviersity Score": "Not Enough Data"}
 
+        return int_vals, {"Dviersity Score": "Not Enough Data"}
 
-def get_scores(text):
-    return calculate_diversity(text)[0]
-
-
-def get_mean_score(text):
-    return calculate_diversity(text)[1]
+def get_sim_words(text, word):
+    word = word.strip()
+    index = 0
+    text = word_tokenize(text)
+    print(sim_words)
+    for idx, i in enumerate(text):
+        if word == i:
+            index = idx
+            break
+    return ', '.join(sim_words[index])
 
 
 def dict_to_list(dictionary, max_size=10):
@@ -224,14 +249,18 @@ def reading_difficulty(excerpt):
             win_preds.append(predict(text, tokenizer).item())
         result = np.mean(win_preds)
         score = -(result * 1.786 + 6.4) + 10
-        return f'Difficulty Level: {round(score,2)}/10 | A {level(score)} student could understand this'
+        return "Difficulty Level: " + str(round(score, 2)) + '/10' + ' | A' + str(
+            level(score)) + " student could understand this"
 
     else:
         result = predict(excerpt).item()
         score = -(result * 1.786 + 6.4) + 10
-        return f'Difficulty Level: {round(score,2)}/10 | A {level(score)} student could understand this'"
+        return 'Difficulty Level: ' + str(round(score, 2)) + '/10' + ' | A' + str(
+            level(score)) + " student could understand this"
+
 
 def calculate_stats(file_name, data_index):
+    # unicode escape only for essays
     with open(file_name, encoding='unicode_escape') as f:
         information = {'lines': 0, 'words_per_sentence': 0, 'words': 0, 'syll_per_word': 0, 'characters_per_word': 0,
                        'reading_difficulty': 0}
@@ -241,6 +270,8 @@ def calculate_stats(file_name, data_index):
 
             if len(line[data_index]) < 100:
                 continue
+
+            # if detect(line[data_index][len(line[data_index]) -400: len(line[data_index])-1]) == 'en':
 
             try:
                 stat = stats(line[data_index])
@@ -269,6 +300,7 @@ def transcribe(audio):
 
 
 def compute_score(target, actual):
+    print(target)
     target = target.lower()
     actual = actual.lower()
     return fuzz.ratio(target, actual)
@@ -303,15 +335,6 @@ def plot():
     return heatmap(diversity, df)
 
 
-def diversity_inter(text):
-    words = word_tokenize(text)
-    scores = get_scores(text)
-    interpret_values = [('', 0.0)]
-    for key, value in scores.items():
-        interpret_values.append((words[key], value))
-    interpret_values.append(('', 0.0))
-    return {'original': text, 'interpretation': interpret_values}
-
 
 def sliding_window(text):
     words = word_tokenize(text)
@@ -344,6 +367,7 @@ def sliding_window(text):
 
     inter_scores = [v for v in average_scores.values()]
     copy_list = inter_scores.copy()
+    print(inter_scores)
     while len(inter_scores) <= len(words) - 1:
         inter_scores.append(copy_list[-1])
 
@@ -356,46 +380,35 @@ def sliding_window(text):
     ax.grid(False)
     plt.xlabel('Word Number', fontweight='bold')
     plt.ylabel('Difficulty Score', fontweight='bold')
-    fig.patch.set_facecolor('white')
     plt.suptitle('Difficulty Score Across Text', fontsize=14, fontweight='bold')
     plt.style.use('ggplot')
-
+    ax.set_facecolor('w')
     fig = plt.gcf()
 
-    map = [('', 0)]
+    mapd = [('', 0)]
     maxy = max(inter_scores)
     miny = min(inter_scores)
     spread = maxy - miny
 
     for idx, i in enumerate(words):
-        map.append((i, (inter_scores[idx] - miny) / spread))
-    map.append(('', 0))
+        mapd.append((i, (inter_scores[idx] - miny) / spread))
+    mapd.append(('', 0))
 
-    return fig, map
-
-
-
-def get_plot(text):
-    return sliding_window(text)[0]
-
-
-def get_dif_inter(text):
-    return {'original': text, 'interpretation': sliding_window(text)[1]}
-
+    return fig, {'original': text, 'interpretation': mapd}
 
 def speech_to_text(speech, target):
     text = p(speech)["text"]
     return text.lower(), {'Pronunciation Score': compute_score(text, target) / 100}, phon(target)
-
+    
+def speech_to_score(speech):
+    text = p(speech)["text"]
+    return reading_difficulty(text), text
 
 def my_i_func(text):
     return {"original": "", "interpretation": [('', 0.0), ('what', -0.2), ('great', 0.3), ('day', 0.5), ('', 0.0)]}
 
-
 def gen_syns(word, level):
-  with open('balanced_synonym_data.json') as f:
     word = word.strip(" ")
-    data = json.loads(f.read())
     school_to_level = {"Elementary Level":'1', "Middle School Level":'2', "High School Level":'3', "College Level":'4'}
     pins = wn_syns(word)
     reko = []
@@ -410,8 +423,246 @@ def gen_syns(word, level):
         str_reko+= i
     return str_reko
 
-with gr.Blocks(title="Automatic Literacy and Speech Assesmen") as demo:
+def get_level(word):
+  with open('balanced_synonym_data.json') as f:
+    word = word.strip(" ")
+    data = json.loads(f.read())
+    level = 0
+    for k, v in data.items():
+      if word in v:
+        level = k
+    if level == 0:
+      return -1
+    return level
+
+def vocab_level_inter(text):
+  text = word_tokenize(text)
+  interp = [('',0)]
+  sum = 0
+  total = 0
+  for idx, i in enumerate(text):
+    lvl = int(get_level(i))/4
+    interp.append((i, lvl))
+    sum+= lvl
+    total += 1
+  interp.append(('', 0))
+  return {'original': text, 'interpretation': interp}, f'{level(sum/total*4*2.5)[1:]} Level Vocabulary'
+
+
+
+logger = logging.getLogger(__name__)
+logging.basicConfig(format = '%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
+                    datefmt = '%m/%d/%Y %H:%M:%S',
+                    level = logging.INFO)
+tokenizer4 = AutoTokenizer.from_pretrained('kanishka/GlossBERT')
+
+def construct_context_gloss_pairs_through_nltk(input, target_start_id, target_end_id):
+    """
+    construct context gloss pairs like sent_cls_ws
+    :param input: str, a sentence
+    :param target_start_id: int
+    :param target_end_id: int
+    :param lemma: lemma of the target word
+    :return: candidate lists
+    """
+    
+    sent = tokenizer4.tokenize(input)
+    assert 0 <= target_start_id and target_start_id < target_end_id  and target_end_id <= len(sent)
+    target = " ".join(sent[target_start_id:target_end_id])
+    if len(sent) > target_end_id:
+        sent = sent[:target_start_id] + ['"'] + sent[target_start_id:target_end_id] + ['"'] + sent[target_end_id:]
+    else:
+        sent = sent[:target_start_id] + ['"'] + sent[target_start_id:target_end_id] + ['"']
+
+    sent = " ".join(sent)
+
+    candidate = []
+    syns = wn.synsets(target)
+    
+    for syn in syns:
+        if target == syn.name().split('.')[0]:
+          continue
+        
+        gloss = (syn.definition(), syn.name())
+        candidate.append((sent, f"{target} : {gloss}", target, gloss))
+
+    assert len(candidate) != 0, f'there is no candidate sense of "{target}" in WordNet, please check'
+    # print(f'there are {len(candidate)} candidate senses of "{target}"')
+
+
+    return candidate
+
+
+class InputFeatures(object):
+    """A single set of features of data."""
+
+    def __init__(self, input_ids, input_mask, segment_ids):
+        self.input_ids = input_ids
+        self.input_mask = input_mask
+        self.segment_ids = segment_ids
+
+
+def convert_to_features(candidate, tokenizer3, max_seq_length=512):
+
+    candidate_results = []
+    features = []
+    for item in candidate:
+        text_a = item[0] # sentence
+        text_b = item[1] # gloss
+        candidate_results.append((item[-2], item[-1])) # (target, gloss)
+
+
+        tokens_a = tokenizer3.tokenize(text_a)
+        tokens_b = tokenizer3.tokenize(text_b)
+        _truncate_seq_pair(tokens_a, tokens_b, max_seq_length - 3)
+        tokens = ["[CLS]"] + tokens_a + ["[SEP]"]
+        segment_ids = [0] * len(tokens)
+        tokens += tokens_b + ["[SEP]"]
+        segment_ids += [1] * (len(tokens_b) + 1)
+
+        input_ids = tokenizer3.convert_tokens_to_ids(tokens)
+
+        # The mask has 1 for real tokens and 0 for padding tokens. Only real
+        # tokens are attended to.
+        input_mask = [1] * len(input_ids)
+
+        # Zero-pad up to the sequence length.
+        padding = [0] * (max_seq_length - len(input_ids))
+        input_ids += padding
+        input_mask += padding
+        segment_ids += padding
+
+        assert len(input_ids) == max_seq_length
+        assert len(input_mask) == max_seq_length
+        assert len(segment_ids) == max_seq_length
+
+        features.append(
+            InputFeatures(input_ids=input_ids,
+                          input_mask=input_mask,
+                          segment_ids=segment_ids))
+
+
+    return features, candidate_results
+
+
+
+def _truncate_seq_pair(tokens_a, tokens_b, max_length):
+    """Truncates a sequence pair in place to the maximum length."""
+
+    # This is a simple heuristic which will always truncate the longer sequence
+    # one token at a time. This makes more sense than truncating an equal percent
+    # of tokens from each, since if one sequence is very short then each token
+    # that's truncated likely contains more information than a longer sequence.
+    while True:
+        total_length = len(tokens_a) + len(tokens_b)
+        if total_length <= max_length:
+            break
+        if len(tokens_a) > len(tokens_b):
+            tokens_a.pop()
+        else:
+            tokens_b.pop()
+
+
+def infer(input, target_start_id, target_end_id, args):
+    sent = tokenizer4.tokenize(input)
+    assert 0 <= target_start_id and target_start_id < target_end_id  and target_end_id <= len(sent)
+    target = " ".join(sent[target_start_id:target_end_id])
+
+
+    device = torch.device("cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu")
+
+
+    label_list = ["0", "1"]
+    num_labels = len(label_list)
+    
+    model = BertForSequenceClassification.from_pretrained(args.bert_model,
+                                                          num_labels=num_labels)
+    model.to(device)
+
+    # print(f"input: {input}\ntarget: {target}")
+    examples = construct_context_gloss_pairs_through_nltk(input, target_start_id, target_end_id)
+    eval_features, candidate_results = convert_to_features(examples, tokenizer4)
+    input_ids = torch.tensor([f.input_ids for f in eval_features], dtype=torch.long)
+    input_mask = torch.tensor([f.input_mask for f in eval_features], dtype=torch.long)
+    segment_ids = torch.tensor([f.segment_ids for f in eval_features], dtype=torch.long)
+
+
+    model.eval()
+    input_ids = input_ids.to(device)
+    input_mask = input_mask.to(device)
+    segment_ids = segment_ids.to(device)
+    with torch.no_grad():
+        logits = model(input_ids=input_ids, token_type_ids=segment_ids, attention_mask=input_mask, labels=None).logits
+    logits_ = F.softmax(logits, dim=-1)
+    logits_ = logits_.detach().cpu().numpy()
+    output = np.argmax(logits_, axis=0)[1]
+    results= []
+    for idx, i in enumerate(logits_):
+      results.append((candidate_results[idx][1], i[1]*100))
+    sorted_results = sorted(results, key=lambda x: x[1], reverse=True)
+
+    return sorted_results
+
+def format_for_gradio(inp):
+  retval = ''
+  for idx, i in enumerate(inp):
+    if idx == len(inp)-1:
+      retval += i.split('.')[0]
+      break
+    retval += f'''{i.split('.')[0]} | '''
+  return retval
+
+
+def smart_synonyms(text, level):
+  parser = argparse.ArgumentParser()
+  parser.add_argument("--bert_model", default="kanishka/GlossBERT", type=str)
+  parser.add_argument("--no_cuda", default=False, action='store_true', help="Whether not to use CUDA when available")
+  args, unknown = parser.parse_known_args()
+
+  location = 0
+  word = ''
+  tokens = tokenizer4.tokenize(text)
+  school_to_level = {"Elementary Level":'1', "Middle School Level":'2', "High School Level":'3', "College Level":'4'}
+  for idx, i in enumerate(tokens):
+    if i[0] == '@':
+      location = idx
+      text = text.replace('@', '')
+      word = tokens[location]
+      break 
+  raw_syns = []
+  raw_defs = []
+  raw_scores = []
+  syns = []
+  defs = []
+  scores = []
+  preds = infer(text, location, location+1, args)
+  for i in preds:
+    if not i[0][1].split('.')[0] in data[school_to_level[level]]:
+      continue
+    raw_syns.append(i[0][1])
+    raw_defs.append(i[0][0])
+    raw_scores.append(i[1])
+    if i[1] > 5:
+      syns.append(i[0][1])
+      defs.append(i[0][0])
+      scores.append(i[1])
+
+  if not syns:
+    top_syns = int(len(raw_syns)*.25//1+1)
+    syns = raw_syns[:top_syns]
+    defs = raw_defs[:top_syns]
+    scores = raw_scores[:top_syns]
+
+  cleaned_syns = format_for_gradio(syns)
+  cleaend_defs = format_for_gradio(defs)
+  
+  return f'{cleaned_syns}: Definition- {cleaend_defs} | '
+
+
+
+with gr.Blocks(title="Automatic Literacy and Speech Assesment") as demo:
   gr.HTML("""<center><h7 style="font-size: 35px">Automatic Literacy and Speech Assesment</h7></center>""")
+  gr.HTML("""<center><h7 style="font-size: 15px">This may take 60s to generate all statistics</h7></center>""")
   with gr.Column():
     with gr.Row():
       with gr.Box():
@@ -427,8 +678,8 @@ with gr.Blocks(title="Automatic Literacy and Speech Assesmen") as demo:
                     audio_file = gr.Audio(source="microphone",type="filepath")
                     grade1 = gr.Button("Grade Your Speech")
             with gr.Group():     
-              gr.Markdown("Reading Level Based Synonyms | Enter only one word at a time")
-              words = gr.Textbox(label="Word For Synonyms")
+              gr.Markdown("""Reading Level Based Synonyms | Enter a sentence with the word you want a synonym | Add an @ before the target word for synonym, e.g. - "Today is an @amazing day"- target word = amazing" """)
+              words = gr.Textbox(label="Text with word for synonyms")
               lvl = gr.Dropdown(choices=["Elementary Level", "Middle School Level", "High School Level", "College Level" ], label="Intended Reading Level For Synonym")
               get_syns = gr.Button("Get Synonyms")
               reccos = gr.Label()
@@ -436,7 +687,7 @@ with gr.Blocks(title="Automatic Literacy and Speech Assesmen") as demo:
 
       with gr.Box():
           diff_output = gr.Label(label='Difficulty Level',show_label=True)
-          gr.Markdown("Diversity Score Across Text")
+          gr.Markdown("Difficulty Score Across Text")
           plotter = gr.Plot()
 
 
@@ -445,11 +696,20 @@ with gr.Blocks(title="Automatic Literacy and Speech Assesmen") as demo:
     with gr.Row():
       with gr.Box():
         div_output = gr.Label(label='Diversity Score', show_label=False)
-        gr.Markdown("Diversity Heatmap | Blue cells are omitted from score | Darker = More Diverse")
+        gr.Markdown("Diversity Heatmap | Blue cells are omitted from score. | Darker = More Diverse")
         interpretation = gr.components.Interpretation(in_text, label="Diversity Heatmap")
+        
+        gr.Markdown("Find Similar Words | Word must be part of analysis text box | Enter only one word at a time")
+        words1 = gr.Textbox(label="Word For Similarity")
+        find_sim = gr.Button("Find Similar Words")
+        sims = gr.Label()
       with gr.Box():
-          gr.Markdown("Relative Difficulty Heatmap- How confusing the text is in that area") 
-          interpretation2 = gr.components.Interpretation(in_text, label="Difficulty Heatmap")
+        gr.Markdown("Relative Difficulty Heatmap- How confusing the text is in that area of text") 
+        interpretation2 = gr.components.Interpretation(in_text, label="Difficulty Heatmap")
+      with gr.Box():
+        vocab_output = gr.Label(label='Vocabulary Level', show_label=True)
+        gr.Markdown("Vocabulary Level Heatmap | Darker = Higher Level | Blue cells are not in vocabulary")
+        interpretation3 = gr.components.Interpretation(in_text, label="Interpretation of Text")
   with gr.Row():
     with gr.Box():
       with gr.Group():      
@@ -461,19 +721,19 @@ with gr.Blocks(title="Automatic Literacy and Speech Assesmen") as demo:
       some_val = gr.Label()
       text = gr.Textbox()
       phones = gr.Textbox()
-        
+  
   gr.Markdown("""**Reading Difficulty**-  Automatically determining how difficult something is to read is a difficult task as underlying 
                  semantics are relevant. To efficiently compute text difficulty, a Distil-Bert pre-trained model is fine-tuned for regression 
                  using The CommonLit Ease of Readability (CLEAR) Corpus. This model scores the text on how difficult it would be for a student
                  to understand.
               """)
   gr.Markdown("""**Lexical Diversity**-  The lexical diversity score is computed by taking the ratio of unique similar words to total similar words 
-                  squared. The similarity is computed as if the cosine similarity of the word2vec embeddings is greater than .75. It is bad writing/speech 
+                  . The similarity is computed as if the cosine similarity of the word2vec embeddings is greater than .75. It is bad writing/speech 
                   practice to repeat the same words when it's possible not to. Vocabulary diversity is generally computed by taking the ratio of unique 
                   strings/ total strings. This does not give an indication if the person has a large vocabulary or if the topic does not require a diverse 
                   vocabulary to express it. This algorithm only scores the text based on how many times a unique word was chosen for a semantic idea, e.g., 
-                  "Forest" and "Trees" are 2 words to represent one semantic idea, so this would receive a 100% lexical diversity score, vs using the word
-                  "Forest" twice would yield you a 25% diversity score, (1 unique word/ 2 total words)^2
+                  "Forest" and "Woods" are 2 words to represent one semantic idea, so this would receive a 100% lexical diversity score, vs using the word
+                  "Forest" twice would yield you a 25% diversity score, (1 unique word/ 2 total words)
               """)
   gr.Markdown("""**Speech Pronunciation Scoring-**-  The Wave2Vec 2.0 model is utilized to convert audio into text in real-time. The model predicts words or phonemes
                   (smallest unit of speech distinguishing one word (or word element) from another) from the input audio from the user. Due to the nature of the model, 
@@ -485,12 +745,12 @@ with gr.Blocks(title="Automatic Literacy and Speech Assesmen") as demo:
 
 
   grade.click(reading_difficulty, inputs=in_text, outputs=diff_output)
-  grade.click(get_mean_score, inputs=in_text, outputs=div_output)
-  grade.click(diversity_inter, inputs=in_text, outputs=interpretation)
-  grade.click(get_dif_inter, inputs=in_text, outputs=interpretation2)
-  grade.click(get_plot, inputs=in_text, outputs=plotter)
+  grade.click(calculate_diversity, inputs=in_text, outputs=[interpretation, div_output])
+  grade.click(sliding_window, inputs=in_text, outputs=[plotter, interpretation2])
+  grade.click(vocab_level_inter, inputs=in_text, outputs=[interpretation3, vocab_output])
   grade1.click(speech_to_score, inputs=audio_file, outputs=diff_output)
   b1.click(speech_to_text, inputs=[audio_file1, target], outputs=[text, some_val, phones])
-  get_syns.click(gen_syns, inputs=[words, lvl], outputs=reccos)
+  get_syns.click(smart_synonyms, inputs=[words, lvl], outputs=reccos)
+  find_sim.click(get_sim_words, inputs=[in_text, words1], outputs=sims)
 demo.launch(debug=True)
 
