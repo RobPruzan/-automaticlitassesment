@@ -42,7 +42,7 @@ tokenizer = DistilBertTokenizer.from_pretrained('distilbert-base-uncased')
 device = torch.device('cuda' if torch.cuda.is_available else 'cpu')
 
 # loading model
-PATH = 'pytorchBERTmodel'
+PATH = 'pytorchRoBERTmodel'
 model = torch.load(PATH, map_location=torch.device('cpu'))
 model.eval()
 
