@@ -12,24 +12,28 @@ from torch.utils.data import TensorDataset, random_split
 from transformers import DistilBertForSequenceClassification, AdamW
 from transformers import DistilBertTokenizer
 from transformers import get_linear_schedule_with_warmup
+from transformers import AutoTokenizer
 
 nltk.download('punkt')
 
-# %matplotlib inline
-
-df = pd.read_csv('/content/train.csv')
-
+df = pd.read_csv('/content/CLEAR_dataset.csv')
 print(f'Number of training samples: {df.shape[0]}')
 
 df.sample(100)
 
-tokenizer = DistilBertTokenizer.from_pretrained('distilbert-base-uncased')
+df.columns.tolist()
 
-excerpts = df.excerpt.values
-targets = df.target.values.astype('float32')
+tokenizer = AutoTokenizer.from_pretrained("distilroberta-base")
 
-plt.hist(df['target'])
+excerpts = df.Excerpt.values
+targets = df.BT_Easiness.values.astype('float32')
+
+plt.hist(df['BT_Easiness'])
 plt.show()
+
+plt.hist(df['Pub Year'])
+
+df.mean(axis=0)
 
 max_len = 0
 
@@ -42,13 +46,11 @@ print(max_len)
 
 input_ids = []
 attention_masks = []
-
 for i in excerpts:
     encoded_text = tokenizer.encode_plus(
         i,
         add_special_tokens=True,
-        max_length=315,
-        pad_to_max_length=True,
+        padding='max_length',
         return_attention_mask=True,
         return_tensors='pt'
     )
@@ -56,6 +58,12 @@ for i in excerpts:
     input_ids.append(encoded_text['input_ids'])
 
     attention_masks.append(encoded_text['attention_mask'])
+
+len(input_ids[1][0])
+
+attention_masks
+
+input_ids
 
 input_ids = torch.cat(input_ids, dim=0)
 attention_masks = torch.cat(attention_masks, dim=0)
@@ -78,6 +86,16 @@ train_dataset, val_dataset = random_split(dataset, [train_size, val_size])
 print('{:>5,} training samples'.format(train_size))
 print('{:>5,} validation samples'.format(val_size))
 
+dataset = TensorDataset(input_ids, attention_masks, labels)
+
+train_size = int(0.8 * len(dataset))
+val_size = len(dataset) - train_size
+
+train_dataset, val_dataset = random_split(dataset, [train_size, val_size])
+
+print('{:>5,} training samples'.format(train_size))
+print('{:>5,} validation samples'.format(val_size))
+
 batch_size = 8
 
 train_dataloader = DataLoader(
@@ -91,9 +109,10 @@ validation_dataloader = DataLoader(
     sampler=SequentialSampler(val_dataset),
     batch_size=batch_size
 )
+#"distilroberta-base"
 
 model = DistilBertForSequenceClassification.from_pretrained(
-    "distilbert-base-uncased",
+    "distilroberta-base",
     num_labels=1,
     output_attentions=False,
     output_hidden_states=False
@@ -123,7 +142,7 @@ torch.manual_seed(seed)
 torch.cuda.manual_seed_all(seed)
 
 training_stats = []
-
+train_loss = []
 for epoch in range(EPOCHS):
     total_train_loss = 0
     model.train()
@@ -133,7 +152,6 @@ for epoch in range(EPOCHS):
         b_input_ids = batch[0].to(device)
         b_input_mask = batch[1].to(device)
         b_labels = batch[2].to(device)
-
         model.zero_grad()
         result = model(b_input_ids,
 
@@ -143,6 +161,8 @@ for epoch in range(EPOCHS):
                        )
 
         loss = result.loss
+
+        train_loss.append(loss.item())
 
         logits = result.logits
 
@@ -167,7 +187,7 @@ for epoch in range(EPOCHS):
     total_eval_accuracy = 0
     total_eval_loss = 0
     nb_eval_steps = 0
-
+    out_model, label_out = [], []
     for batch in validation_dataloader:
         b_input_ids = batch[0].to(device)
         b_input_mask = batch[1].to(device)
@@ -181,9 +201,15 @@ for epoch in range(EPOCHS):
                 return_dict=True,
             )
 
+
+
         loss = loss.to(torch.float32)
         logits = result.logits
-
+        
+        for idx, i in enumerate(batch[2]):
+          out_model.append(logits[idx].item())
+          label_out.append(b_labels[idx].item())
+      
         total_eval_loss += loss.item()
 
         logits = logits.detach().cpu().numpy()
@@ -203,15 +229,47 @@ for epoch in range(EPOCHS):
 print("")
 print("Training complete!")
 
-torch.save(model, '/content/untitled')
+def mae(data1, data2):
+  total_err = 0
+  loops = 0
+  for idx, i in enumerate(data1):
+    total_err += (abs(i - data2[idx]))
+    loops += 1
+  return total_err/loops
 
-PATH = '/content/pytorchBERTmodel'
+x = list(range(len(out_model)))
+y = out_model
+
+x1 = list(range(len(label_out)))
+y1 = label_out
+
+
+
+r2 = np.corrcoef(y, y1)[0,1]**2
+plt.title(f'r2: {r2} | MAE: {mae(y,y1)}')
+plt.scatter(y, y1, label='line 1')
+
+x = list(range(len(train_loss)))
+y = train_loss
+fig, ax = plt.subplots()
+
+ax.plot(x, y, color='orange', linewidth=2)
+ax.grid(False)
+plt.xlabel('Step #', fontweight='bold')
+plt.ylabel('Loss', fontweight='bold')
+plt.suptitle('Loss Over Time', fontsize=14, fontweight='bold')
+plt.style.use('ggplot')
+ax.set_facecolor('w')
+fig = plt.gcf()
+
+torch.save(model, '/content/pytorchRoBERTmodel')
+
+PATH = '/content/pytorchRoBERTmodel'
 model = torch.load(PATH)
 model.eval()
 model.to(device)
 
-
-def predict(text, tokenizer):
+def predict(text, tokenizer=tokenizer):
     model.eval()
     model.to(device)
 
@@ -245,19 +303,9 @@ def predict(text, tokenizer):
 
     return result
 
+#Arxiv Abstract
 
 sen = """
-Recent JWST observations suggest an excess of 𝑧 & 10 galaxy candidates above most theoretical models. Here, we explore how
-the interplay between halo formation timescales, star formation efficiency and dust attenuation affects the properties and number
-densities of galaxies we can detect in the early universe. We calculate the theoretical upper limit on the UV luminosity function,
-assuming star formation is 100% efficient and all gas in halos is converted into stars, and that galaxies are at the peak age for
-UV emission (∼ 10 Myr). This upper limit is ∼ 4 orders of magnitude greater than current observations, implying these are
-fully consistent with star formation in ΛCDM cosmology. One day, a woman was walking her two dogs. One was a big, friendly labrador 
-and the other was a little yappy dog. As they walked, the little dog started to bark at a cat. The cat hissed and ran away. The 
-labrador just stood there wagging his tail. The woman scolded the little dog, "You're supposed to be my protector! Why didn't you 
-chase that cat away?" The labrador just looked at her and said, "I'm sorry, but I just don't see the point.
-"""
-sen_2 = """
 Interstellar chemistry is important for galaxy formation, as it determines the rate at which gas can cool, and enables
 us to make predictions for observable spectroscopic lines from ions and molecules. We explore two central aspects
 of modelling the chemistry of the interstellar medium (ISM): (1) the effects of local stellar radiation, which ionises
@@ -270,40 +318,5 @@ metal depletion. For comparison, we also run simulations with a spatially unifor
 depletion. Our fiducial model broadly reproduces observed trends in Hi and H2 mass with stellar mass, and in line
 luminosity versus star formation rate for [Cii]158µm, [Oi]63µm, [Oiii]88µm, [Nii]122µm and Hα6563˚A. Our simulations
 """
-windows_2 = []
-words = word_tokenize(sen_2)
-for idx, text in enumerate(words):
-    if idx <= len(words) - 21:
-        x = ' '.join(words[idx: idx + 20])
-        windows_2.append(x)
 
-win_preds_2 = []
-for text in windows_2:
-    win_preds_2.append(predict(text, tokenizer).item())
-
-windows = []
-words = word_tokenize(sen)
-for idx, text in enumerate(words):
-    if idx <= len(words) - 21:
-        x = ' '.join(words[idx: idx + 20])
-
-        windows.append(x)
-
-win_preds = []
-for text in windows:
-    win_preds.append(predict(text, tokenizer).item())
-
-plt.style.use('seaborn-notebook')
-# Data
-x = list(range(len(win_preds)))
-y = win_preds
-x2 = list(range(len(win_preds_2)))
-y2 = win_preds_2
-# Plot
-plt.plot(x, y, color='#ff0000')
-plt.plot(x2, y2, color='blue')
-plt.grid(color='#cccccc', linestyle='--', linewidth=1)
-plt.xlabel('Window Sequence')
-plt.ylabel('Difficulty Score')
-plt.suptitle('Difficulty Score Over Time', fontsize=14, fontweight='bold')
-plt.show()
+predict(sen)
