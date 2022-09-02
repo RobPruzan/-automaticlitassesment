@@ -32,6 +32,7 @@
                    (defined by the fine-tuned DistilBert model). Based on those statistics we can derive what words are most likely to occur in different levels
                    of reading. To generate synoynms, the WordNet lexical database is used, which are then catarogized by the word occurence statistics and reccomended
                    to users.
-                   
+*WireFrame-* ![image](https://user-images.githubusercontent.com/97781863/188037492-d56e27ed-b6b3-40de-88ac-d46719380cb6.png)
+
 **Demo**- https://huggingface.co/spaces/RobPruzan/automaticlitassesment (Text above 25-50 words works best for visualazations)
 
