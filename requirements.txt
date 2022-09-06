@@ -9,6 +9,5 @@ torch
 gensim
 sklearn
 seaborn
-gradio
 matplotlib
 numpy
