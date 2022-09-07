@@ -72,7 +72,9 @@ def calculate_diversity(text):
         stop_words.add(i)
 
     tokenized_text = word_tokenize(text)
-
+    if len(tokenized_text) > 1500:
+      return f'Input length of:{len(tokenized_text)} exceed limit of 1500 tokens'
+      
     tokenized_text = list(map(lambda word: word.lower(), tokenized_text))
     global sim_words
     sim_words = {}
